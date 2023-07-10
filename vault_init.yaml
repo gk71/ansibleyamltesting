@@ -1,0 +1,40 @@
+- name: "Vault initializing"
+  hosts: "localhost"
+  gather_facts: False
+  connection: "local"
+  tasks:
+  - name: "Check if Vault has been initialized"
+    uri:
+      url: http://vault:8200/v1/sys/init
+      validate_certs: no
+      body_format: json
+      return_content: yes
+    delay: 5
+    retries: 20
+    until: vault_init_check.status == 200
+    register: vault_init_check
+  - block:
+    - name: Initialize Vault
+      uri:
+        url: http://vault:8200/v1/sys/init
+        method: post
+        body:
+          recovery_shares: 5
+          recovery_threshold: 3
+        body_format: json
+      register: init_response
+      until: init_response is succeeded
+      retries: 10
+    - name: "Store Vault Root token and unseal keys {{ lookup('env','SECRETS_MANAGER_NAME') }}"
+      community.aws.secretsmanager_secret:
+        name: "{{ lookup('env','SECRETS_MANAGER_NAME') }}"
+        state: present
+        secret_type: 'string'
+        json_secret:
+          recoverykey1: "{{ init_response['json']['recovery_keys'][0] }}"
+          recoverykey2: "{{ init_response['json']['recovery_keys'][1] }}"
+          recoverykey3: "{{ init_response['json']['recovery_keys'][2] }}"
+          recoverykey4: "{{ init_response['json']['recovery_keys'][3] }}"
+          recoverykey5: "{{ init_response['json']['recovery_keys'][4] }}"
+          token: "{{ init_response['json']['root_token'] }}"
+    when: vault_init_check.json.initialized == false
